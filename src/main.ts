@@ -1,34 +1,61 @@
-/**
- * Some predefined delay values (in milliseconds).
- */
-export enum Delays {
-  Short = 500,
-  Medium = 2000,
-  Long = 5000,
+import OpenAI from 'openai';
+import { AtpAgent } from '@atproto/api';
+
+import dotenv from 'dotenv';
+dotenv.config();
+
+const OPENAI_BASEURL = process.env.OPENAI_BASEURL;
+const OPENAI_MODEL = process.env.OPENAI_MODEL;
+const BLUESKY_USER = process.env.BLUESKY_USER;
+const BLUEKSY_PWD = process.env.BLUEKSY_PWD;
+const BLUESKY_SVC = process.env.BLUESKY_SVC;
+
+const client = new OpenAI({
+  baseURL: OPENAI_BASEURL,
+  apiKey: 'sk-1234',
+});
+
+const agent = new AtpAgent({ service: BLUESKY_SVC });
+
+await agent.login({
+  identifier: BLUESKY_USER,
+  password: BLUEKSY_PWD,
+});
+
+async function main(): Promise<void> {
+  const did = agent.did;
+  const getPosts = await agent.getAuthorFeed({ actor: did });
+
+  const all_chat_styles = getPosts.data.feed
+    .filter(({ post }) => {
+      return (
+        post.record['$type'] === 'app.bsky.feed.post' && post.author.did === did
+      );
+    })
+    .map(({ post }) => {
+      return post.record;
+    })
+    .map((post: any) => post.text);
+
+  const chat = await client.chat.completions.create({
+    model: OPENAI_MODEL,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are a social media manager. The user below will enter in the entire post history of an individual. Do not include hashtags. Keep the character count under 300. Do not add whitespace. Generate the next post.',
+      },
+      { role: 'user', content: all_chat_styles.join(',') },
+    ],
+  });
+
+  console.log(chat.choices[0].message.content);
+
+  await agent.post({
+    // created at plus minus hour
+    createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    text: chat.choices[0].message.content + ': TEST POST',
+  });
 }
 
-/**
- * Returns a Promise<string> that resolves after a given time.
- *
- * @param {string} name - A name.
- * @param {number=} [delay=Delays.Medium] - A number of milliseconds to delay resolution of the Promise.
- * @returns {Promise<string>}
- */
-function delayedHello(
-  name: string,
-  delay: number = Delays.Medium,
-): Promise<string> {
-  return new Promise((resolve: (value?: string) => void) =>
-    setTimeout(() => resolve(`Hello, ${name}`), delay),
-  );
-}
-
-// Please see the comment in the .eslintrc.json file about the suppressed rule!
-// Below is an example of how to use ESLint errors suppression. You can read more
-// at https://eslint.org/docs/latest/user-guide/configuring/rules#disabling-rules
-
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-explicit-any
-export async function greeter(name: any) {
-  // The name parameter should be of type string. Any is used only to trigger the rule.
-  return await delayedHello(name, Delays.Long);
-}
+main().catch(console.error);
